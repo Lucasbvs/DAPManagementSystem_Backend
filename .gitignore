@@ -7,7 +7,6 @@ src/generated/
 # Variables de entorno
 .env
 .env.*
-.env.example
 
 # Logs y resultados de pruebas
 *.log
