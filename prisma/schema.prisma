@@ -1,0 +1,133 @@
+generator client {
+ provider = "prisma-client"
+ output = "../src/generated/prisma"
+}
+datasource db {
+ provider = "postgresql"
+}
+/// Usuarios de acceso; los propietarios son entidades comerciales separadas.
+model User {
+ id Int @id @default(autoincrement())
+ email String @unique @db.VarChar(254)
+ name String @db.VarChar(100)
+ passwordHash String @map("password_hash") @db.VarChar(255)
+ active Boolean @default(true)
+ createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+ @@map("Users")
+}
+model Propietario {
+ id_propietario Int @id @default(autoincrement())
+ nombre String @db.VarChar(50)
+ telefono String? @db.VarChar(15)
+ vestidos Vestido[]
+ movimientos MovimientoContabilidad[]
+ @@map("Propietarios")
+}
+model Vestido {
+ id_vestido Int @id @default(autoincrement())
+ numero_vestido Int @default(autoincrement())
+ nombre String @db.VarChar(50)
+ descripcion String @db.VarChar(150)
+ precio_unitario Decimal @db.Decimal(10,2)
+ precio_cuarta Decimal? @db.Decimal(10,2)
+ precio_media_docena Decimal? @db.Decimal(10,2)
+ id_propietario Int
+ propietario Propietario @relation(fields:[id_propietario], references:[id_propietario], onDelete:Restrict)
+ variantes VarianteVestido[]
+ @@index([id_propietario])
+ @@map("Vestidos")
+}
+/// Stock por combinación de color y talla; el total del vestido se deriva de la suma.
+model VarianteVestido {
+ id_variante Int @id @default(autoincrement())
+ id_vestido Int
+ color String @db.VarChar(30)
+ talla String? @db.VarChar(10)
+ cantidad_stock Int @default(0)
+ vestido Vestido @relation(fields:[id_vestido], references:[id_vestido], onDelete:Cascade)
+ detalles DetalleVenta[]
+ @@index([id_vestido])
+ @@map("Variantes_Vestido")
+}
+model Cliente {
+ id_cliente Int @id @default(autoincrement())
+ celular String @unique @db.VarChar(15)
+ nombre String? @db.VarChar(100)
+ direccion_entrega String? @db.VarChar(255)
+ link_ubicacion String?
+ ventas Venta[]
+ @@map("Clientes")
+}
+enum Tarifa {
+ unitario
+ cuarta
+ media_docena
+}
+enum Departamento {
+ La_Paz @map("La Paz")
+ Cochabamba
+ Santa_Cruz @map("Santa Cruz")
+ Oruro
+ Potosi @map("Potosí")
+ Tarija
+ Chuquisaca
+ Beni
+ Pando
+}
+enum EstadoVenta {
+ Realizada
+ Cancelada
+}
+enum TipoMovimiento {
+ Ingreso
+ Costo
+ Gasto
+}
+model Venta {
+ id_venta Int @id @default(autoincrement())
+ numero_diario Int
+ fecha DateTime @db.Timestamptz(3)
+ id_cliente Int
+ total_prendas Int
+ tarifa_aplicada Tarifa
+ monto_vestidos Decimal @db.Decimal(10,2)
+ adicional_delivery Decimal @default(0) @db.Decimal(10,2)
+ departamento_destino Departamento?
+ ciudad_provincia String? @db.VarChar(100)
+ costo_envio Decimal? @db.Decimal(10,2)
+ total_cobrado Decimal @db.Decimal(10,2)
+ monto_neto Decimal @db.Decimal(10,2)
+ estado EstadoVenta @default(Realizada)
+ cliente Cliente @relation(fields:[id_cliente], references:[id_cliente], onDelete:Restrict)
+ detalles DetalleVenta[]
+ movimientos MovimientoContabilidad[]
+ @@index([id_cliente])
+ @@index([fecha])
+ @@map("Ventas")
+}
+model DetalleVenta {
+ id_detalle Int @id @default(autoincrement())
+ id_venta Int
+ id_variante Int
+ cantidad Int
+ precio_unitario_aplicado Decimal @db.Decimal(10,2)
+ venta Venta @relation(fields:[id_venta], references:[id_venta], onDelete:Cascade)
+ variante VarianteVestido @relation(fields:[id_variante], references:[id_variante], onDelete:Restrict)
+ @@index([id_venta])
+ @@index([id_variante])
+ @@map("Detalle_Venta")
+}
+model MovimientoContabilidad {
+ id_movimiento Int @id @default(autoincrement())
+ fecha DateTime @db.Date
+ concepto String @db.VarChar(150)
+ tipo TipoMovimiento
+ importe Decimal @db.Decimal(10,2)
+ id_propietario Int
+ id_venta Int?
+ propietario Propietario @relation(fields:[id_propietario], references:[id_propietario], onDelete:Restrict)
+ venta Venta? @relation(fields:[id_venta], references:[id_venta], onDelete:SetNull)
+ @@index([id_propietario])
+ @@index([id_venta])
+ @@map("Movimientos_Contabilidad")
+}

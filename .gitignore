@@ -1,0 +1,23 @@
+# Dependencias y compilación
+node_modules/
+dist/
+*.tsbuildinfo
+src/generated/
+
+# Variables de entorno
+.env
+.env.*
+.env.example
+
+# Logs y resultados de pruebas
+*.log
+coverage/
+
+# Respaldos y archivos locales
+backups/
+*.dump
+*.backup
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
