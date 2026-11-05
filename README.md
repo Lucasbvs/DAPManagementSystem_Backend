@@ -1,6 +1,6 @@
 # DAP Elegancia · Backend
 
-API de DAP Elegancia, un sistema web para administrar el inventario de vestidos de una tienda. Centraliza los modelos, sus variantes, existencias, precios y propietarios, y sincroniza los cambios entre dispositivos autorizados.
+API de DAP Elegancia, un sistema web para administrar el inventario y las ventas de vestidos de una tienda. Centraliza los modelos, sus variantes, existencias, precios y propietarios, y sincroniza los cambios entre dispositivos autorizados.
 
 El backend y el frontend se mantienen en repositorios independientes y se comunican mediante HTTP. La base de datos PostgreSQL se denomina `DAP_db`.
 
@@ -16,7 +16,7 @@ El backend y el frontend se mantienen en repositorios independientes y se comuni
 - Notificaciones de cambios mediante Server-Sent Events (SSE).
 - Administración de cuentas desde la consola del servidor.
 
-Ventas y contabilidad cuentan con un modelo de datos preparado, pero sus operaciones de negocio aún no están implementadas.
+Ventas incluye registro, edición, cambio de prendas, cancelación, filtro por fecha boliviana e impresión de pedidos en PDF. Contabilidad queda pendiente de una siguiente etapa.
 
 ## Tecnologías
 
@@ -130,6 +130,11 @@ Las rutas protegidas requieren `Authorization: Bearer <token>`.
 | POST | `/api/vestidos` | Registrar un vestido. |
 | PUT | `/api/vestidos/:id` | Actualizar un vestido y sus variantes. |
 | DELETE | `/api/vestidos/:id` | Eliminar un vestido. |
+| GET | `/api/ventas?fecha=AAAA-MM-DD` | Ventas de la fecha, por defecto hoy en Bolivia. |
+| POST | `/api/ventas` | Registrar venta y descontar stock. |
+| PUT | `/api/ventas/:id` | Editar / cambiar prendas y ajustar existencias. |
+| POST | `/api/ventas/:id/cancelar` | Cancelar y devolver stock una sola vez. |
+| POST | `/api/ventas/imprimir` | PDF de ventas realizadas de una fecha; cuerpo `{fecha, ids}`. |
 | GET | `/api/vestidos/events` | Flujo SSE autenticado de cambios de inventario. |
 
 Formato de respuesta:
@@ -166,7 +171,7 @@ Utilizar un propietario existente. En una edición, conservar el `id_variante` d
 
 ## Acceso y sesiones
 
-No existe registro público. Todas las cuentas activas tienen acceso completo al inventario. Las cuentas se crean y desactivan mediante los comandos privados del servidor.
+No existe registro público. Todas las cuentas activas tienen acceso completo al inventario y ventas. Las cuentas se crean y desactivan mediante los comandos privados del servidor.
 
 La sesión normal dura hasta 8 horas. La opción de mantener sesión iniciada emite un token de 30 días. El cierre de sesión del frontend afecta al navegador actual; desactivar la cuenta impide nuevas peticiones autenticadas.
 
@@ -183,3 +188,34 @@ Configurar PostgreSQL, las variables de entorno y el origen definitivo del front
 No publicar `.env`, secretos ni credenciales. Los dispositivos deben conectarse a la misma API; `localhost` siempre identifica el equipo desde el cual se abre la aplicación.
 
 Las pruebas de integración utilizan PostgreSQL embebido desechable mediante PGlite en el puerto `55439`, sin utilizar `DAP_db`. Cubren autenticación, validaciones, integridad referencial, migraciones y notificaciones a dos conexiones simultáneas.
+
+## Reglas de ventas
+
+La cantidad total de prendas del pedido determina el tramo para todos sus modelos: 1–2 unitario, 3–5 cuarta, 6 o más media docena. Si el precio del tramo es `NULL`, ese modelo usa su precio unitario; no se hereda otro descuento. El backend calcula todos los importes con Decimal y nunca acepta totales o precios enviados por el cliente.
+
+- `total_cobrado = monto_vestidos + adicional_delivery + costo_envio`.
+- `monto_neto = total_cobrado - adicional_delivery - costo_envio - costo_delivery`.
+- `costo_delivery` es Bs 10 por pedido, guardado en la venta; puede existir neto negativo.
+- El envío departamental lleva departamento, ciudad/provincia y costo, separados del adicional de delivery.
+- El número `V-001`, `V-002`, etc. se asigna automáticamente por día de Bolivia; una cancelación no libera ese número.
+- Cliente, teléfono, dirección, ubicación, nombre/color/talla y precios se guardan como datos históricos de cada pedido. Al editar sin cambiar el tramo se conserva el precio de las variantes existentes; si cambia el tramo o se agrega una variante, se aplica el catálogo vigente.
+- Las operaciones de stock y venta son transaccionales; se validan existencias, edición concurrente mediante `version` y reintentos de registro mediante `clave_registro` (UUID).
+- Cancelar conserva la venta y devuelve sus prendas una sola vez. Una venta cancelada no se edita ni se imprime, y queda excluida del resumen.
+- El PDF contiene solo las ventas seleccionadas de la fecha solicitada, ordenadas por correlativo, con número de pedido, datos del cliente, prendas/color/talla, cantidades, precios, subtotal, adicional, envío y total. Cada pedido comienza en una página nueva; pedidos extensos continúan en páginas adicionales.
+- Registrar, editar o cancelar emite el evento SSE existente, por lo que ventas e inventario se actualizan entre dispositivos.
+
+Ejemplo de registro (`id_variante` debe existir y tener stock):
+
+```json
+{
+  "clave_registro": "5bbac87c-4ac7-4afd-bac2-2f657f740381",
+  "cliente": {"celular":"70000001","nombre":"Cliente","direccion_entrega":"Cochabamba","link_ubicacion":null},
+  "detalles": [{"id_variante":1,"cantidad":3}],
+  "adicional_delivery":"5.00",
+  "departamento_destino":null,
+  "ciudad_provincia":null,
+  "costo_envio":null
+}
+```
+
+Editar usa el mismo formato completo y la `version` recibida en la venta. Cancelar recibe `{"version":1}`. Un conflicto responde 409 y requiere recargar antes de reintentar.

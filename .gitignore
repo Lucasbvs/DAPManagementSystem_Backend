@@ -11,6 +11,7 @@ src/generated/
 # Logs y resultados de pruebas
 *.log
 coverage/
+*.tsbuildinfo
 
 # Respaldos y archivos locales
 backups/
@@ -20,3 +21,4 @@ backups/
 # Archivos del sistema
 .DS_Store
 Thumbs.db
+src/generated/
