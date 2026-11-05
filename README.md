@@ -112,7 +112,7 @@ El dominio incluye `Propietarios`, `Vestidos`, `Variantes_Vestido`, `Clientes`, 
 
 - El precio unitario debe ser mayor que cero. Los precios opcionales se guardan como `NULL` cuando no existen; si se informan, también deben ser positivos.
 - Los importes se almacenan como `DECIMAL(10,2)` y se intercambian como cadenas decimales en JSON.
-- El registro y la edición de inventario requieren cantidades enteras positivas por variante.
+- Una variante nueva requiere cantidad entera positiva. Una variante existente puede conservar stock cero; nunca se admiten negativos.
 - El número de vestido lo genera el servidor; no se recibe en el formulario y puede tener saltos.
 - No se permiten variantes repetidas de color y talla dentro de un modelo.
 - Eliminar un vestido elimina sus variantes, salvo que existan detalles de venta que impidan el borrado por integridad referencial.
@@ -156,6 +156,7 @@ Ejemplo de registro:
 ```json
 {
   "nombre": "Aurora",
+  "ubicacion_almacen": "A1",
   "descripcion": "Vestido de satén",
   "precio_unitario": "95.00",
   "precio_cuarta": null,

@@ -24,6 +24,7 @@ model Propietario {
  @@map("Propietarios")
 }
 model Vestido {
+ ubicacion_almacen String? @db.VarChar(20)
  id_vestido Int @id @default(autoincrement())
  numero_vestido Int @default(autoincrement())
  nombre String @db.VarChar(50)
