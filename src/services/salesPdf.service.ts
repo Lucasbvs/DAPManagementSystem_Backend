@@ -1,6 +1,10 @@
 import PDFDocument from "pdfkit";
 import { resolve } from "node:path";
 import type { printableSales } from "./ventas.service.js";
+const hour = (value: string) => {
+  const [h, m] = value.split(":").map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
+};
 const money = (n: unknown) => `Bs ${Number(n).toFixed(2)}`;
 export async function salesPdf(
   sales: Awaited<ReturnType<typeof printableSales>>,
@@ -37,12 +41,22 @@ export async function salesPdf(
     doc.font("Body").fontSize(10);
     const height = doc.heightOfString(text, { width: 510 }) + 9;
     space(height, order);
-    doc.fillColor(ink).text(text, 42, y, { width: 510 });
+    doc
+      .fillColor(ink)
+      .font("Body")
+      .fontSize(10)
+      .text(text, 42, y, { width: 510 });
     y += height;
   }
   for (const sale of sales) {
     const order = `V-${String(sale.numero_diario).padStart(3, "0")}`;
     page(order);
+    if (sale.tipo === "Cambio" && sale.venta_origen)
+      line(
+        "Cambio del pedido",
+        `V-${String(sale.venta_origen.numero_diario).padStart(3, "0")} / ${new Intl.DateTimeFormat("es-BO", { timeZone: "America/La_Paz" }).format(sale.venta_origen.fecha)}`,
+        order,
+      );
     line(
       "Fecha",
       new Intl.DateTimeFormat("es-BO", {
@@ -59,8 +73,15 @@ export async function salesPdf(
     line(
       "Entrega",
       sale.departamento_destino
-        ? `Envío a ${sale.departamento_destino.replaceAll("_", " ")} / ${sale.ciudad_provincia}`
+        ? `Envío a ${sale.departamento_destino.replaceAll("_", " ")}${sale.ciudad_provincia ? ` / ${sale.ciudad_provincia}` : ""}`
         : "Delivery local",
+      order,
+    );
+    line(
+      "Horario de entrega",
+      sale.hora_entrega_desde
+        ? `${hour(sale.hora_entrega_desde)}${sale.hora_entrega_hasta ? ` a ${hour(sale.hora_entrega_hasta)}` : ""}`
+        : "Sin horario registrado",
       order,
     );
     y += 12;
@@ -79,13 +100,18 @@ export async function salesPdf(
     };
     header();
     for (const d of sale.detalles) {
-      const title = [
-        d.nombre_vestido ?? d.variante.vestido.nombre,
-        d.color ?? d.variante.color,
-        d.talla ?? "",
-      ]
-        .filter(Boolean)
-        .join(" / ");
+      const title =
+        (sale.tipo === "Cambio"
+          ? `${d.tipo === "Devolucion" ? "Devolver" : "Entregar"}: `
+          : "") +
+        [
+          d.nombre_vestido ?? d.variante.vestido.nombre,
+          d.color ?? d.variante.color,
+          d.talla ?? "",
+          d.ubicacion_almacen ? `Almacén ${d.ubicacion_almacen}` : "",
+        ]
+          .filter(Boolean)
+          .join(" / ");
       doc.font("Body").fontSize(10);
       const height = Math.max(
         25,
@@ -105,10 +131,16 @@ export async function salesPdf(
           width: 72,
           align: "right",
         })
-        .text(money(Number(d.precio_unitario_aplicado) * d.cantidad), 457, y, {
-          width: 86,
-          align: "right",
-        });
+        .text(
+          money(
+            Number(d.precio_unitario_aplicado) *
+              d.cantidad *
+              (d.tipo === "Devolucion" ? -1 : 1),
+          ),
+          457,
+          y,
+          { width: 86, align: "right" },
+        );
       y += height;
       doc
         .moveTo(42, y - 7)
@@ -120,14 +152,26 @@ export async function salesPdf(
     space(160, order);
     line("Prendas", `${sale.total_prendas} unidades`, order);
     line("Subtotal de prendas", money(sale.monto_vestidos), order);
-    line("Delivery adicional", money(sale.adicional_delivery), order);
-    if (sale.departamento_destino)
+    if (sale.tipo === "Cambio")
+      line("Valor devuelto", money(sale.monto_devolucion), order);
+    else line("Delivery adicional", money(sale.adicional_delivery), order);
+    if (sale.departamento_destino && sale.tipo !== "Cambio")
       line("Costo de envío departamental", money(sale.costo_envio), order);
     doc
       .font("Bold")
       .fontSize(16)
       .fillColor(ink)
-      .text(`TOTAL: ${money(sale.total_cobrado)}`, 42, y + 5);
+      .text(
+        sale.tipo === "Cambio"
+          ? Number(sale.total_cobrado) > 0
+            ? `A COBRAR: ${money(sale.total_cobrado)}`
+            : Number(sale.total_cobrado) < 0
+              ? `A DEVOLVER: ${money(-Number(sale.total_cobrado))}`
+              : "SIN DIFERENCIA"
+          : `TOTAL: ${money(sale.total_cobrado)}`,
+        42,
+        y + 5,
+      );
     y += 32;
     doc
       .font("Body")

@@ -20,8 +20,16 @@ export const departamentos = [
   "Beni",
   "Pando",
 ] as const;
+const hour = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Usa una hora válida");
+const schedule = {
+  hora_entrega_desde: hour,
+  hora_entrega_hasta: hour.nullish().transform((v) => v ?? null),
+};
 export const ventaSchema = z
   .object({
+    ...schedule,
     clave_registro: z.uuid(),
     version: z.number().int().positive().optional(),
     cliente: z
@@ -53,7 +61,10 @@ export const ventaSchema = z
       )
       .min(1)
       .max(100),
-    adicional_delivery: money,
+    adicional_delivery: z
+      .union([money, z.literal(""), z.null()])
+      .optional()
+      .transform((v) => v || "0"),
     departamento_destino: z.enum(departamentos).nullable(),
     ciudad_provincia: optionalText(100),
     costo_envio: money.nullable(),
@@ -68,14 +79,17 @@ export const ventaSchema = z
         path: ["detalles"],
         message: "No repitas variantes",
       });
-    if (
-      v.departamento_destino &&
-      (!v.ciudad_provincia || v.costo_envio === null)
-    )
+    if (v.hora_entrega_hasta && v.hora_entrega_hasta <= v.hora_entrega_desde)
+      c.addIssue({
+        code: "custom",
+        path: ["hora_entrega_hasta"],
+        message: "La hora final debe ser posterior a la inicial",
+      });
+    if (v.departamento_destino && v.costo_envio === null)
       c.addIssue({
         code: "custom",
         path: ["ciudad_provincia"],
-        message: "Completa ciudad y costo de envío",
+        message: "Completa el costo de envío",
       });
     if (
       !v.departamento_destino &&
@@ -98,3 +112,48 @@ export const printSchema = z
   })
   .strict();
 export type VentaInput = z.infer<typeof ventaSchema>;
+
+export const cambioSchema = z
+  .object({
+    ...schedule,
+    clave_registro: z.uuid(),
+    version: z.number().int().positive(),
+    devoluciones: z
+      .array(
+        z
+          .object({
+            id_detalle: z.number().int().positive(),
+            cantidad: z.number().int().min(1).max(10000),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(100),
+    entregas: z
+      .array(
+        z
+          .object({
+            id_variante: z.number().int().positive(),
+            cantidad: z.number().int().min(1).max(10000),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(100),
+  })
+  .strict()
+  .superRefine((v, c) => {
+    if (
+      new Set(v.devoluciones.map((x) => x.id_detalle)).size !==
+        v.devoluciones.length ||
+      new Set(v.entregas.map((x) => x.id_variante)).size !== v.entregas.length
+    )
+      c.addIssue({ code: "custom", message: "No repitas prendas" });
+    if (v.hora_entrega_hasta && v.hora_entrega_hasta <= v.hora_entrega_desde)
+      c.addIssue({
+        code: "custom",
+        path: ["hora_entrega_hasta"],
+        message: "La hora final debe ser posterior a la inicial",
+      });
+  });
+export type CambioInput = z.infer<typeof cambioSchema>;

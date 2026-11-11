@@ -7,6 +7,7 @@ import {
   fechaSchema,
   cancelSchema,
   printSchema,
+  cambioSchema,
 } from "../validators/venta.schema.js";
 import * as sales from "../services/ventas.service.js";
 import { notifyInventoryChanged } from "../services/inventoryEvents.service.js";
@@ -18,6 +19,9 @@ ventasRoutes.get("/ventas", async (req, res) => {
     res,
     await sales.listSales(
       fechaSchema.parse(req.query.fecha ?? sales.boliviaDay()),
+      req.query.propietario === undefined
+        ? undefined
+        : idSchema.parse(req.query.propietario),
     ),
   );
 });
@@ -54,4 +58,13 @@ ventasRoutes.post("/ventas/:id/cancelar", async (req, res) => {
   );
   notifyInventoryChanged();
   ok(res, row);
+});
+
+ventasRoutes.post("/ventas/:id/cambios", async (req, res) => {
+  const row = await sales.exchangeSale(
+    idSchema.parse(req.params.id),
+    cambioSchema.parse(req.body),
+  );
+  notifyInventoryChanged();
+  ok(res, row, 201);
 });

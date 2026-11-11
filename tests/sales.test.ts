@@ -79,6 +79,8 @@ test(
         v2 = dress.variantes[1].id_variante,
         b = basic.variantes[0].id_variante;
       const input = (n = 1, id = v) => ({
+        hora_entrega_desde: "14:30",
+        hora_entrega_hasta: null,
         clave_registro: randomUUID(),
         cliente: {
           celular: "70000001",

@@ -130,9 +130,10 @@ Las rutas protegidas requieren `Authorization: Bearer <token>`.
 | POST | `/api/vestidos` | Registrar un vestido. |
 | PUT | `/api/vestidos/:id` | Actualizar un vestido y sus variantes. |
 | DELETE | `/api/vestidos/:id` | Eliminar un vestido. |
-| GET | `/api/ventas?fecha=AAAA-MM-DD` | Ventas de la fecha, por defecto hoy en Bolivia. |
+| GET | `/api/ventas?fecha=AAAA-MM-DD&propietario=1` | Ventas de la fecha boliviana; dueño opcional; canceladas al fondo. |
 | POST | `/api/ventas` | Registrar venta y descontar stock. |
 | PUT | `/api/ventas/:id` | Editar / cambiar prendas y ajustar existencias. |
+| POST | `/api/ventas/:id/cambios` | Crear otro registro con devolución, entrega y diferencia. |
 | POST | `/api/ventas/:id/cancelar` | Cancelar y devolver stock una sola vez. |
 | POST | `/api/ventas/imprimir` | PDF de ventas realizadas de una fecha; cuerpo `{fecha, ids}`. |
 | GET | `/api/vestidos/events` | Flujo SSE autenticado de cambios de inventario. |
@@ -210,6 +211,8 @@ Ejemplo de registro (`id_variante` debe existir y tener stock):
 ```json
 {
   "clave_registro": "5bbac87c-4ac7-4afd-bac2-2f657f740381",
+  "hora_entrega_desde": "14:00",
+  "hora_entrega_hasta": "16:00",
   "cliente": {"celular":"70000001","nombre":"Cliente","direccion_entrega":"Cochabamba","link_ubicacion":null},
   "detalles": [{"id_variante":1,"cantidad":3}],
   "adicional_delivery":"5.00",

@@ -48,6 +48,7 @@ test(
       let dressId = 0;
       let variantId = 0;
       const input = {
+        ubicacion_almacen: "A1",
         nombre: "Aurora",
         descripcion: "Satén",
         precio_unitario: "95.10",
@@ -400,6 +401,134 @@ test(
               })
             ).nombre,
             "Aurora editada",
+          );
+        },
+      );
+      await t.test(
+        "ubicaciones obligatorias, normalizadas y editables; ubicaciones compartidas",
+        async () => {
+          for (const value of ["", "A0", "N1", "AA1", "A01", "A-1", null])
+            assert.equal(
+              (
+                await request(app)
+                  .post("/api/vestidos")
+                  .set(auth())
+                  .send({ ...input, ubicacion_almacen: value })
+              ).status,
+              400,
+            );
+          const { ubicacion_almacen, ...missing } = input;
+          assert.equal(
+            (await request(app).post("/api/vestidos").set(auth()).send(missing))
+              .status,
+            400,
+          );
+          const r = await request(app)
+            .post("/api/vestidos")
+            .set(auth())
+            .send({ ...input, ubicacion_almacen: " c4 " });
+          assert.equal(r.status, 201, JSON.stringify(r.body));
+          assert.equal(r.body.data.ubicacion_almacen, "C4");
+          const changed = await request(app)
+            .put(`/api/vestidos/${r.body.data.id_vestido}`)
+            .set(auth())
+            .send({ ...input, ubicacion_almacen: "m12" });
+          assert.equal(changed.status, 200);
+          assert.equal(changed.body.data.ubicacion_almacen, "M12");
+          const shared = await request(app)
+            .post("/api/vestidos")
+            .set(auth())
+            .send({ ...input, ubicacion_almacen: "M12" });
+          assert.equal(shared.status, 201);
+          for (const id of [
+            r.body.data.id_vestido,
+            shared.body.data.id_vestido,
+          ])
+            await prisma.vestido.delete({ where: { id_vestido: id } });
+        },
+      );
+      await t.test(
+        "precios iguales o invertidos rechazados por API y SQL sin cambios parciales",
+        async () => {
+          const invalid = [
+            { precio_cuarta: "95.10" },
+            { precio_cuarta: "96" },
+            { precio_media_docena: "85" },
+            { precio_media_docena: "86" },
+            { precio_cuarta: null, precio_media_docena: "95.10" },
+          ];
+          for (const prices of invalid) {
+            const payload = { ...input, ...prices };
+            assert.equal(
+              (
+                await request(app)
+                  .post("/api/vestidos")
+                  .set(auth())
+                  .send(payload)
+              ).status,
+              400,
+            );
+            assert.equal(
+              (
+                await request(app)
+                  .put(`/api/vestidos/${dressId}`)
+                  .set(auth())
+                  .send(payload)
+              ).status,
+              400,
+            );
+          }
+          await assert.rejects(() =>
+            prisma.vestido.update({
+              where: { id_vestido: dressId },
+              data: { precio_cuarta: "95.10" },
+            }),
+          );
+          const saved = await prisma.vestido.findUniqueOrThrow({
+            where: { id_vestido: dressId },
+          });
+          assert.equal(saved.precio_cuarta?.toString(), "85");
+        },
+      );
+      await t.test(
+        "editar ubicación permite conservar una variante agotada; una nueva no empieza en cero",
+        async () => {
+          await prisma.varianteVestido.update({
+            where: { id_variante: variantId },
+            data: { cantidad_stock: 0 },
+          });
+          const payload = {
+            ...input,
+            ubicacion_almacen: "B2",
+            variantes: [
+              {
+                ...input.variantes[0],
+                id_variante: variantId,
+                cantidad_stock: 0,
+              },
+            ],
+          };
+          const edited = await request(app)
+            .put(`/api/vestidos/${dressId}`)
+            .set(auth())
+            .send(payload);
+          assert.equal(edited.status, 200, JSON.stringify(edited.body));
+          assert.equal(edited.body.data.variantes[0].cantidad_stock, 0);
+          const newZero = {
+            ...payload,
+            variantes: [
+              ...payload.variantes,
+              { color: "Nuevo", talla: null, cantidad_stock: 0 },
+            ],
+          };
+          assert.equal(
+            (
+              await request(app)
+                .put(`/api/vestidos/${dressId}`)
+                .set(auth())
+                .send(newZero)
+            ).status,
+            400,
           );
         },
       );

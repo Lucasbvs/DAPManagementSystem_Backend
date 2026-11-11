@@ -84,7 +84,23 @@ enum TipoMovimiento {
  Costo
  Gasto
 }
+enum TipoVenta {
+ Venta
+ Cambio
+}
+enum TipoDetalle {
+ Entrega
+ Devolucion
+}
 model Venta {
+ hora_entrega_desde String? @db.VarChar(5)
+ hora_entrega_hasta String? @db.VarChar(5)
+ tipo TipoVenta @default(Venta)
+ id_venta_origen Int?
+ venta_origen Venta? @relation("CambiosVenta",fields:[id_venta_origen],references:[id_venta],onDelete:Restrict)
+ cambios Venta[] @relation("CambiosVenta")
+ monto_devolucion Decimal @default(0) @db.Decimal(10,2)
+
  clave_registro String? @unique @db.Uuid
  version Int @default(1)
  cliente_nombre String? @db.VarChar(100)
@@ -109,11 +125,20 @@ model Venta {
  cliente Cliente @relation(fields:[id_cliente], references:[id_cliente], onDelete:Restrict)
  detalles DetalleVenta[]
  movimientos MovimientoContabilidad[]
+ @@index([id_venta_origen])
  @@index([id_cliente])
  @@index([fecha])
  @@map("Ventas")
 }
 model DetalleVenta {
+ tipo TipoDetalle @default(Entrega)
+ id_detalle_origen Int?
+ detalle_origen DetalleVenta? @relation("DevolucionesDetalle",fields:[id_detalle_origen],references:[id_detalle],onDelete:Restrict)
+ devoluciones DetalleVenta[] @relation("DevolucionesDetalle")
+ id_propietario_venta Int?
+ propietario_nombre String? @db.VarChar(50)
+ ubicacion_almacen String? @db.VarChar(20)
+
  nombre_vestido String? @db.VarChar(50)
  color String? @db.VarChar(30)
  talla String? @db.VarChar(10)
@@ -124,6 +149,7 @@ model DetalleVenta {
  precio_unitario_aplicado Decimal @db.Decimal(10,2)
  venta Venta @relation(fields:[id_venta], references:[id_venta], onDelete:Cascade)
  variante VarianteVestido @relation(fields:[id_variante], references:[id_variante], onDelete:Restrict)
+ @@index([id_detalle_origen])
  @@index([id_venta])
  @@index([id_variante])
  @@map("Detalle_Venta")
