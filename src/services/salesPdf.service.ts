@@ -152,17 +152,20 @@ export async function salesPdf(
     space(160, order);
     line("Prendas", `${sale.total_prendas} unidades`, order);
     line("Subtotal de prendas", money(sale.monto_vestidos), order);
-    if (sale.tipo === "Cambio")
+    if (sale.tipo === "Cambio" && !sale.reemplazo_completo)
       line("Valor devuelto", money(sale.monto_devolucion), order);
     else line("Delivery adicional", money(sale.adicional_delivery), order);
-    if (sale.departamento_destino && sale.tipo !== "Cambio")
+    if (
+      sale.departamento_destino &&
+      (sale.tipo !== "Cambio" || sale.reemplazo_completo)
+    )
       line("Costo de envío departamental", money(sale.costo_envio), order);
     doc
       .font("Bold")
       .fontSize(16)
       .fillColor(ink)
       .text(
-        sale.tipo === "Cambio"
+        sale.tipo === "Cambio" && !sale.reemplazo_completo
           ? Number(sale.total_cobrado) > 0
             ? `A COBRAR: ${money(sale.total_cobrado)}`
             : Number(sale.total_cobrado) < 0

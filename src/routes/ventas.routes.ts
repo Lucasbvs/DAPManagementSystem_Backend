@@ -4,6 +4,8 @@ import { ok } from "../utils/response.js";
 import { idSchema } from "../validators/vestido.schema.js";
 import {
   ventaSchema,
+  entregaSchema,
+  entregasSchema,
   fechaSchema,
   cancelSchema,
   printSchema,
@@ -67,4 +69,20 @@ ventasRoutes.post("/ventas/:id/cambios", async (req, res) => {
   );
   notifyInventoryChanged();
   ok(res, row, 201);
+});
+
+ventasRoutes.post("/ventas/:id/entrega", async (req, res) => {
+  const row = await sales.confirmDelivery(
+    idSchema.parse(req.params.id),
+    entregaSchema.parse(req.body),
+  );
+  notifyInventoryChanged();
+  ok(res, row);
+});
+
+ventasRoutes.post("/ventas/entregas", async (req, res) => {
+  const input = entregasSchema.parse(req.body);
+  const rows = await sales.confirmDeliveries(input.ventas);
+  notifyInventoryChanged();
+  ok(res, rows);
 });

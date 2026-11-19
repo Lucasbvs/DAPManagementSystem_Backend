@@ -3,7 +3,11 @@ import { prisma } from "./prisma.service.js";
 import { nextSaleNumber } from "./saleNumber.service.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/AppError.js";
-import type { VentaInput, CambioInput } from "../validators/venta.schema.js";
+import type {
+  VentaInput,
+  CambioInput,
+  EntregaInput,
+} from "../validators/venta.schema.js";
 export const includeSale = {
   cliente: true,
   venta_origen: {
@@ -14,7 +18,7 @@ export const includeSale = {
     include: {
       variante: { include: { vestido: { include: { propietario: true } } } },
       devoluciones: {
-        where: { venta: { estado: "Realizada" as const } },
+        where: { venta: { estado: { not: "Cancelada" as const } } },
         select: { cantidad: true },
       },
     },
@@ -33,28 +37,35 @@ export function dayRange(day: string) {
   return { gte: start, lt: new Date(start.getTime() + 86400000) };
 }
 export const listSales = (day: string, owner?: number) =>
-  prisma.venta.findMany({
-    where: {
-      fecha: dayRange(day),
-      ...(owner
-        ? {
-            detalles: {
-              some: {
-                OR: [
-                  { id_propietario_venta: owner },
-                  {
-                    id_propietario_venta: null,
-                    variante: { vestido: { id_propietario: owner } },
-                  },
-                ],
+  prisma.venta
+    .findMany({
+      where: {
+        fecha: dayRange(day),
+        ...(owner
+          ? {
+              detalles: {
+                some: {
+                  OR: [
+                    { id_propietario_venta: owner },
+                    {
+                      id_propietario_venta: null,
+                      variante: { vestido: { id_propietario: owner } },
+                    },
+                  ],
+                },
               },
-            },
-          }
-        : {}),
-    },
-    include: includeSale,
-    orderBy: [{ estado: "asc" }, { numero_diario: "desc" }],
-  });
+            }
+          : {}),
+      },
+      include: includeSale,
+      orderBy: [{ numero_diario: "desc" }],
+    })
+    .then((rows) =>
+      rows.sort(
+        (a, b) =>
+          Number(a.estado === "Cancelada") - Number(b.estado === "Cancelada"),
+      ),
+    );
 const decimal = (v: string | number | Prisma.Decimal) => new Prisma.Decimal(v);
 export const tariffFor = (n: number): "unitario" | "cuarta" | "media_docena" =>
   n >= 6 ? "media_docena" : n >= 3 ? "cuarta" : "unitario";
@@ -162,7 +173,7 @@ export async function saveSale(input: VentaInput, id?: number) {
         "EXCHANGE_HISTORY",
         "Este pedido tiene historial de cambios. Registra otro cambio para conservarlo",
       );
-    if (old && (old.estado === "Cancelada" || old.version !== input.version))
+    if (old && (old.estado !== "Pendiente" || old.version !== input.version))
       throw new AppError(
         409,
         "SALE_CHANGED",
@@ -274,6 +285,7 @@ export async function saveSale(input: VentaInput, id?: number) {
       adicional_delivery: additional,
       departamento_destino: input.departamento_destino,
       ciudad_provincia: input.ciudad_provincia,
+      forma_pago: input.forma_pago,
       costo_envio: input.costo_envio === null ? null : shipping,
       total_cobrado: charged,
       monto_neto: net,
@@ -281,7 +293,7 @@ export async function saveSale(input: VentaInput, id?: number) {
     };
     if (old) {
       const changed = await tx.venta.updateMany({
-        where: { id_venta: id, version: input.version, estado: "Realizada" },
+        where: { id_venta: id, version: input.version, estado: "Pendiente" },
         data: { ...data, version: { increment: 1 } },
       });
       if (!changed.count)
@@ -317,6 +329,7 @@ export async function saveSale(input: VentaInput, id?: number) {
     const sale = await tx.venta.create({
       data: {
         ...data,
+        estado: "Pendiente",
         clave_registro: input.clave_registro,
         fecha: now,
         numero_diario: number,
@@ -336,7 +349,7 @@ export async function cancelSale(id: number, version: number) {
     });
     if (!sale) throw new AppError(404, "NOT_FOUND", "Venta no encontrada");
     if (sale.estado === "Cancelada") return sale;
-    if (sale.cambios.some((c) => c.estado === "Realizada"))
+    if (sale.cambios.some((c) => c.estado !== "Cancelada"))
       throw new AppError(
         409,
         "ACTIVE_EXCHANGES",
@@ -349,7 +362,7 @@ export async function cancelSale(id: number, version: number) {
         "La venta cambió. Recarga antes de cancelar",
       );
     const changed = await tx.venta.updateMany({
-      where: { id_venta: id, version, estado: "Realizada" },
+      where: { id_venta: id, version, estado: { not: "Cancelada" } },
       data: { estado: "Cancelada", version: { increment: 1 } },
     });
     if (!changed.count)
@@ -363,7 +376,11 @@ export async function cancelSale(id: number, version: number) {
       stock.set(
         d.id_variante,
         (stock.get(d.id_variante) ?? 0) +
-          (d.tipo === "Devolucion" ? -d.cantidad : d.cantidad),
+          (d.tipo === "Devolucion"
+            ? sale.reemplazo_completo
+              ? 0
+              : -d.cantidad
+            : d.cantidad - d.cantidad_cancelada),
       );
     await adjustStock(tx, stock);
     if (sale.id_venta_origen)
@@ -379,7 +396,11 @@ export async function cancelSale(id: number, version: number) {
 }
 export async function printableSales(day: string, ids: number[]) {
   const sales = await prisma.venta.findMany({
-    where: { id_venta: { in: ids }, fecha: dayRange(day), estado: "Realizada" },
+    where: {
+      id_venta: { in: ids },
+      fecha: dayRange(day),
+      estado: { not: "Cancelada" },
+    },
     include: includeSale,
     orderBy: { numero_diario: "asc" },
   });
@@ -389,7 +410,16 @@ export async function printableSales(day: string, ids: number[]) {
       "INVALID_SELECTION",
       "Selecciona ventas realizadas de la fecha elegida. Alguna cambió o fue cancelada",
     );
-  return sales;
+  return sales.map((sale) => ({
+    ...sale,
+    detalles: sale.detalles
+      .filter((d) =>
+        d.tipo === "Entrega"
+          ? d.cantidad > d.cantidad_cancelada
+          : !sale.reemplazo_completo,
+      )
+      .map((d) => ({ ...d, cantidad: d.cantidad - d.cantidad_cancelada })),
+  }));
 }
 
 async function adjustStock(
@@ -439,6 +469,12 @@ export async function exchangeSale(id: number, input: CambioInput) {
         "SALE_CHANGED",
         "El pedido cambió o fue cancelado. Actualiza antes de registrar el cambio",
       );
+    if (source.estado !== "Realizada")
+      throw new AppError(
+        409,
+        "SALE_NOT_DELIVERED",
+        "Confirma la entrega antes de cambiar vestidos",
+      );
     const stock = new Map<number, number>();
     let returned = decimal(0),
       delivered = decimal(0);
@@ -450,7 +486,9 @@ export async function exchangeSale(id: number, input: CambioInput) {
       if (
         !line ||
         item.cantidad >
-          line.cantidad - line.devoluciones.reduce((n, d) => n + d.cantidad, 0)
+          line.cantidad -
+            line.cantidad_cancelada -
+            line.devoluciones.reduce((n, d) => n + d.cantidad, 0)
       )
         throw new AppError(
           409,
@@ -480,7 +518,7 @@ export async function exchangeSale(id: number, input: CambioInput) {
         ubicacion_almacen: line.variante.vestido.ubicacion_almacen,
       });
     }
-    const total = input.entregas.reduce((n, d) => n + d.cantidad, 0);
+    let total = input.entregas.reduce((n, d) => n + d.cantidad, 0);
     const variants = await tx.varianteVestido.findMany({
       where: { id_variante: { in: input.entregas.map((d) => d.id_variante) } },
       include: { vestido: { include: { propietario: true } } },
@@ -515,9 +553,38 @@ export async function exchangeSale(id: number, input: CambioInput) {
         "EMPTY_EXCHANGE",
         "Selecciona prendas diferentes para registrar el cambio",
       );
-    const difference = delivered.minus(returned);
+    // Carry forward the garments retained by the customer at their historical prices.
+    for (const line of source.detalles.filter((d) => d.tipo === "Entrega")) {
+      const returnedNow =
+        input.devoluciones.find((d) => d.id_detalle === line.id_detalle)
+          ?.cantidad ?? 0;
+      const retained =
+        line.cantidad -
+        line.cantidad_cancelada -
+        line.devoluciones.reduce((n, d) => n + d.cantidad, 0) -
+        returnedNow;
+      if (retained <= 0) continue;
+      total += retained;
+      delivered = delivered.plus(line.precio_unitario_aplicado.mul(retained));
+      lines.push({
+        tipo: "Entrega",
+        id_variante: line.id_variante,
+        cantidad: retained,
+        precio_unitario_aplicado: line.precio_unitario_aplicado,
+        nombre_vestido: line.nombre_vestido,
+        color: line.color,
+        talla: line.talla,
+        id_propietario_venta: line.id_propietario_venta,
+        propietario_nombre: line.propietario_nombre,
+        ubicacion_almacen: line.ubicacion_almacen,
+      });
+    }
+    const charged = delivered
+      .plus(source.adicional_delivery)
+      .plus(source.costo_envio ?? 0);
+    const net = delivered.minus(source.costo_delivery);
     if (
-      delivered.greaterThan("99999999.99") ||
+      charged.greaterThan("99999999.99") ||
       returned.greaterThan("99999999.99")
     )
       throw new AppError(
@@ -527,8 +594,12 @@ export async function exchangeSale(id: number, input: CambioInput) {
       );
     await adjustStock(tx, stock);
     const changed = await tx.venta.updateMany({
-      where: { id_venta: id, version: input.version, estado: "Realizada" },
-      data: { version: { increment: 1 } },
+      where: {
+        id_venta: id,
+        version: input.version,
+        estado: { not: "Cancelada" },
+      },
+      data: { estado: "Cancelada", version: { increment: 1 } },
     });
     if (!changed.count)
       throw new AppError(
@@ -541,6 +612,8 @@ export async function exchangeSale(id: number, input: CambioInput) {
     return tx.venta.create({
       data: {
         tipo: "Cambio",
+        reemplazo_completo: true,
+        estado: "Pendiente",
         id_venta_origen: id,
         clave_registro: input.clave_registro,
         numero_diario: number,
@@ -558,14 +631,156 @@ export async function exchangeSale(id: number, input: CambioInput) {
         tarifa_aplicada: tariffFor(total),
         monto_vestidos: delivered,
         monto_devolucion: returned,
-        total_cobrado: difference,
-        monto_neto: difference,
-        costo_delivery: 0,
-        adicional_delivery: 0,
-        costo_envio: 0,
+        total_cobrado: charged,
+        monto_neto: net,
+        costo_delivery: source.costo_delivery,
+        adicional_delivery: source.adicional_delivery,
+        forma_pago: source.forma_pago,
+        costo_envio: source.costo_envio,
         detalles: { create: lines },
       },
       include: includeSale,
     });
+  });
+}
+
+async function confirmDeliveryInTransaction(
+  tx: Prisma.TransactionClient,
+  id: number,
+  input: EntregaInput,
+) {
+  const sale = await tx.venta.findUnique({
+    where: { id_venta: id },
+    include: includeSale,
+  });
+  if (!sale) throw new AppError(404, "NOT_FOUND", "Venta no encontrada");
+  const lines = sale.detalles.filter((d) => d.tipo === "Entrega");
+  if (
+    input.entregas.some(
+      (item) =>
+        !lines.some(
+          (d) =>
+            d.id_detalle === item.id_detalle && item.cantidad <= d.cantidad,
+        ),
+    )
+  )
+    throw new AppError(
+      400,
+      "INVALID_DELIVERY",
+      "Revisa las cantidades de las prendas entregadas",
+    );
+  const quantities = new Map(
+    input.entregas.map((d) => [d.id_detalle, d.cantidad]),
+  );
+  if (
+    input.costo_envio !== undefined &&
+    (sale.forma_pago !== "Pagado" || !sale.departamento_destino)
+  )
+    throw new AppError(
+      400,
+      "INVALID_SHIPPING",
+      "El costo de envío solo se puede ajustar en ventas pagadas con envío",
+    );
+  const shipping =
+    input.costo_envio === undefined
+      ? sale.costo_envio
+      : decimal(input.costo_envio);
+  // Repeating a successful confirmation must not restore stock twice.
+  if (sale.estado !== "Pendiente") {
+    if (
+      sale.version === input.version + 1 &&
+      (input.costo_envio === undefined ||
+        decimal(sale.costo_envio ?? 0).equals(
+          sale.estado === "Cancelada" ? 0 : input.costo_envio,
+        )) &&
+      lines.every(
+        (d) =>
+          d.cantidad - d.cantidad_cancelada ===
+          (quantities.get(d.id_detalle) ?? 0),
+      )
+    )
+      return sale;
+    throw new AppError(
+      409,
+      "SALE_CHANGED",
+      "La entrega ya fue resuelta. Recarga la venta",
+    );
+  }
+  if (sale.version !== input.version)
+    throw new AppError(
+      409,
+      "SALE_CHANGED",
+      "La venta cambió. Recarga antes de confirmar",
+    );
+  let total = 0,
+    subtotal = decimal(0);
+  const stock = new Map<number, number>();
+  for (const line of lines) {
+    const delivered = quantities.get(line.id_detalle) ?? 0;
+    const cancelled = line.cantidad - delivered;
+    total += delivered;
+    subtotal = subtotal.plus(line.precio_unitario_aplicado.mul(delivered));
+    stock.set(line.id_variante, (stock.get(line.id_variante) ?? 0) + cancelled);
+    await tx.detalleVenta.update({
+      where: { id_detalle: line.id_detalle },
+      data: { cantidad_cancelada: cancelled },
+    });
+  }
+  const charged = total
+    ? subtotal.plus(sale.adicional_delivery).plus(shipping ?? 0)
+    : decimal(0);
+  if (charged.greaterThan("99999999.99"))
+    throw new AppError(
+      400,
+      "INVALID_TOTAL",
+      "El total no debe exceder Bs 99.999.999,99",
+    );
+  const changed = await tx.venta.updateMany({
+    where: { id_venta: id, version: input.version, estado: "Pendiente" },
+    data: {
+      estado: total ? "Realizada" : "Cancelada",
+      version: { increment: 1 },
+      total_prendas: total,
+      monto_vestidos: subtotal,
+      costo_envio: shipping,
+      total_cobrado: charged,
+      monto_neto: total ? subtotal.minus(sale.costo_delivery) : decimal(0),
+      ...(!total
+        ? {
+            costo_delivery: decimal(0),
+            adicional_delivery: decimal(0),
+            costo_envio: sale.costo_envio === null ? null : decimal(0),
+          }
+        : {}),
+    },
+  });
+  if (!changed.count)
+    throw new AppError(
+      409,
+      "SALE_CHANGED",
+      "La venta cambió. Recarga antes de confirmar",
+    );
+  await adjustStock(tx, stock);
+  return tx.venta.findUniqueOrThrow({
+    where: { id_venta: id },
+    include: includeSale,
+  });
+}
+
+export async function confirmDelivery(id: number, input: EntregaInput) {
+  return transaction((tx) => confirmDeliveryInTransaction(tx, id, input));
+}
+
+export async function confirmDeliveries(
+  orders: (EntregaInput & { id_venta: number })[],
+) {
+  return transaction(async (tx) => {
+    const results = [];
+    for (const order of [...orders].sort((a, b) => a.id_venta - b.id_venta)) {
+      results.push(
+        await confirmDeliveryInTransaction(tx, order.id_venta, order),
+      );
+    }
+    return results;
   });
 }

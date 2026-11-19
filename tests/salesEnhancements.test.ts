@@ -110,11 +110,31 @@ test(
         ],
         entregas: [{ id_variante: id, cantidad: quantity }],
       });
-      const exchange = (sale: any, data: unknown) =>
-        request(app)
+      const exchange = async (sale: any, data: any) => {
+        const current = await fresh(sale.id_venta);
+        if (current.estado === "Pendiente") {
+          const delivery = await request(app)
+            .post(`/api/ventas/${sale.id_venta}/entrega`)
+            .set(auth)
+            .send({
+              version: current.version,
+              entregas: current.detalles
+                .filter((d) => d.tipo === "Entrega")
+                .map((d) => ({
+                  id_detalle: d.id_detalle,
+                  cantidad: d.cantidad,
+                })),
+            });
+          assert.equal(delivery.status, 200, JSON.stringify(delivery.body));
+          sale.version = delivery.body.data.version;
+          sale.estado = "Realizada";
+          data = { ...data, version: sale.version };
+        }
+        return request(app)
           .post(`/api/ventas/${sale.id_venta}/cambios`)
           .set(auth)
           .send(data);
+      };
       const stock = async (id: number) =>
         (
           await prisma.varianteVestido.findUniqueOrThrow({
@@ -227,6 +247,7 @@ test(
             hora_entrega_hasta: "16:00",
             adicional_delivery: "",
             departamento_destino: "La_Paz",
+            forma_pago: "Pagado",
             costo_envio: "20",
           });
           assert.equal(r.status, 201, JSON.stringify(r.body));
@@ -245,7 +266,7 @@ test(
         },
       );
       await t.test(
-        "nuevo cambio cobra diferencia, mantiene el original y mueve stock una sola vez",
+        "nuevo cambio reemplaza el original con total completo y mueve stock una sola vez",
         async () => {
           const source = await create(),
             beforeA = await stock(a),
@@ -259,13 +280,14 @@ test(
           assert.notEqual(changed.id_venta, source.id_venta);
           assert.equal(changed.tipo, "Cambio");
           assert.equal(changed.id_venta_origen, source.id_venta);
-          assert.equal(changed.total_cobrado, "50");
-          assert.equal(changed.monto_neto, "50");
-          assert.equal(changed.costo_delivery, "0");
+          assert.equal(changed.total_cobrado, "150");
+          assert.equal(changed.monto_neto, "140");
+          assert.equal(changed.costo_delivery, "10");
           assert.equal(changed.monto_devolucion, "100");
           assert.equal(await stock(a), beforeA + 1);
           assert.equal(await stock(b), beforeB - 1);
           const original = await fresh(source.id_venta);
+          assert.equal(original.estado, "Cancelada");
           assert.equal(original.total_cobrado.toString(), source.total_cobrado);
           assert.equal(
             original.detalles[0].id_detalle,
@@ -294,7 +316,7 @@ test(
                 .set(auth)
                 .send({ version: original.version })
             ).status,
-            409,
+            200,
           );
           assert.equal(
             (await exchange(original, change(original, c))).status,
@@ -303,11 +325,11 @@ test(
         },
       );
       await t.test(
-        "cambios con devolución de dinero, sin diferencia y sin stock: rollback",
+        "cambios de menor e igual valor y sin stock: rollback",
         async () => {
           for (const [id, amount] of [
-            [c, "-25"],
-            [e, "0"],
+            [c, "75"],
+            [e, "100"],
           ] as const) {
             const sale = await create();
             const r = await exchange(sale, change(sale, id));
@@ -328,7 +350,7 @@ test(
         },
       );
       await t.test(
-        "cambios encadenados se cancelan de atrás hacia adelante y no duplican stock",
+        "cambios encadenados cancelan sus originales y no duplican stock",
         async () => {
           const source = await create(),
             originalA = await stock(a),
@@ -344,7 +366,7 @@ test(
                 .set(auth)
                 .send({ version: (await fresh(first.id_venta)).version })
             ).status,
-            409,
+            200,
           );
           for (const sale of [second, first])
             for (let i = 0; i < 2; i++)
@@ -357,7 +379,7 @@ test(
                 ).status,
                 200,
               );
-          assert.equal(await stock(a), originalA);
+          assert.equal(await stock(a), originalA + 1);
           assert.equal(await stock(b), originalB);
           assert.equal(await stock(c), originalC);
           assert.equal(
@@ -373,7 +395,7 @@ test(
         },
       );
       await t.test(
-        "no revierte un cambio si la prenda devuelta ya se vendió y no queda stock",
+        "cancelar un reemplazo devuelve sus prendas sin recuperar las ya devueltas",
         async () => {
           const source = await create(),
             ex = (await exchange(source, change(source, b))).body.data;
@@ -388,9 +410,9 @@ test(
                 .set(auth)
                 .send({ version: ex.version })
             ).status,
-            409,
+            200,
           );
-          assert.equal((await fresh(ex.id_venta)).estado, "Realizada");
+          assert.equal((await fresh(ex.id_venta)).estado, "Cancelada");
           assert.equal(await stock(a), 0);
           await prisma.varianteVestido.update({
             where: { id_variante: a },
@@ -415,14 +437,22 @@ test(
           });
           assert.equal(r.status, 201);
           const partial = r.body.data;
+          const first = await exchange(partial, change(partial, b));
+          assert.equal(first.status, 201);
+          const next = await fresh(first.body.data.id_venta);
+          const kept = next.detalles.find(
+            (d: any) => d.tipo === "Entrega" && d.id_variante === a,
+          )!;
+          const nextBody = {
+            ...change(next, c),
+            devoluciones: [{ id_detalle: kept.id_detalle, cantidad: 1 }],
+          };
+          assert.equal((await exchange(next, nextBody)).status, 201);
           assert.equal(
-            (await exchange(partial, change(partial, b))).status,
-            201,
+            (await exchange(await fresh(partial.id_venta), change(partial, e)))
+              .status,
+            409,
           );
-          const next = await fresh(partial.id_venta);
-          assert.equal((await exchange(next, change(next, c))).status, 201);
-          const last = await fresh(partial.id_venta);
-          assert.equal((await exchange(last, change(last, e))).status, 409);
         },
       );
       await t.test(

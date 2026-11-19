@@ -105,7 +105,11 @@ test(
             { ...input(), detalles: [] },
             { ...input(), adicional_delivery: "-1" },
             { ...input(), detalles: [{ id_variante: v, cantidad: 0 }] },
-            { ...input(), departamento_destino: "La_Paz" },
+            {
+              ...input(),
+              departamento_destino: "La_Paz",
+              cliente: { celular: "70000001", nombre: null },
+            },
             { ...input(), cliente: { celular: "invalid" } },
             {
               ...input(),
@@ -170,6 +174,7 @@ test(
             ],
             departamento_destino: "La_Paz",
             ciudad_provincia: "El Alto",
+            forma_pago: "Pagado",
             costo_envio: "20.50",
           };
           const r = await post(body);
@@ -413,6 +418,7 @@ test(
               })),
               departamento_destino: "Santa_Cruz",
               ciudad_provincia: "Ciudad de destino para el pedido de prueba",
+              forma_pago: "Pagado",
               costo_envio: "22.50",
             })
           ).body.data;

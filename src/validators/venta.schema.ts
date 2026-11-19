@@ -67,7 +67,8 @@ export const ventaSchema = z
       .transform((v) => v || "0"),
     departamento_destino: z.enum(departamentos).nullable(),
     ciudad_provincia: optionalText(100),
-    costo_envio: money.nullable(),
+    forma_pago: z.enum(["Pagado", "Por_pagar"]).default("Por_pagar"),
+    costo_envio: money.nullish().transform((v) => v ?? null),
   })
   .strict()
   .superRefine((v, c) => {
@@ -85,11 +86,18 @@ export const ventaSchema = z
         path: ["hora_entrega_hasta"],
         message: "La hora final debe ser posterior a la inicial",
       });
-    if (v.departamento_destino && v.costo_envio === null)
+    if (v.departamento_destino && !v.cliente.nombre)
       c.addIssue({
         code: "custom",
-        path: ["ciudad_provincia"],
-        message: "Completa el costo de envío",
+        path: ["cliente", "nombre"],
+        message:
+          "El nombre del cliente es obligatorio para envíos a otro departamento o ciudad",
+      });
+    if (v.forma_pago === "Por_pagar" && v.costo_envio !== null)
+      c.addIssue({
+        code: "custom",
+        path: ["costo_envio"],
+        message: "El costo de envío solo corresponde a ventas pagadas",
       });
     if (
       !v.departamento_destino &&
@@ -157,3 +165,64 @@ export const cambioSchema = z
       });
   });
 export type CambioInput = z.infer<typeof cambioSchema>;
+
+export const entregaSchema = z
+  .object({
+    costo_envio: money.optional(),
+    version: z.number().int().positive(),
+    entregas: z
+      .array(
+        z
+          .object({
+            id_detalle: z.number().int().positive(),
+            cantidad: z.number().int().min(0).max(10000),
+          })
+          .strict(),
+      )
+      .max(100),
+  })
+  .strict()
+  .refine(
+    (v) =>
+      new Set(v.entregas.map((d) => d.id_detalle)).size === v.entregas.length,
+    { message: "No repitas prendas" },
+  );
+export type EntregaInput = z.infer<typeof entregaSchema>;
+
+export const entregasSchema = z
+  .object({
+    ventas: z
+      .array(
+        z
+          .object({
+            costo_envio: money.optional(),
+            id_venta: z.number().int().positive().max(2147483647),
+            version: z.number().int().positive(),
+            entregas: z
+              .array(
+                z
+                  .object({
+                    id_detalle: z.number().int().positive(),
+                    cantidad: z.number().int().min(0).max(10000),
+                  })
+                  .strict(),
+              )
+              .max(100)
+              .refine(
+                (lines) =>
+                  new Set(lines.map((line) => line.id_detalle)).size ===
+                  lines.length,
+                { message: "No repitas prendas" },
+              ),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(100)
+      .refine(
+        (orders) =>
+          new Set(orders.map((order) => order.id_venta)).size === orders.length,
+        { message: "No repitas ventas" },
+      ),
+  })
+  .strict();
