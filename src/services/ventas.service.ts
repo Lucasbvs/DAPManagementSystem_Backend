@@ -3,6 +3,11 @@ import { prisma } from "./prisma.service.js";
 import { nextSaleNumber } from "./saleNumber.service.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/AppError.js";
+import {
+  applyOwnerAmounts,
+  lineAmount,
+  lineDiscount,
+} from "./salePricing.service.js";
 import type {
   VentaInput,
   CambioInput,
@@ -244,6 +249,12 @@ export async function saveSale(input: VentaInput, id?: number) {
       lines.push({
         ...line,
         precio_unitario_aplicado: price,
+        descuento_manual:
+          previous &&
+          previous.cantidad === line.cantidad &&
+          old?.tarifa_aplicada === tariffFor(total)
+            ? previous.descuento_manual
+            : decimal(0),
         nombre_vestido: previous?.nombre_vestido ?? v.vestido.nombre,
         color: previous?.color ?? v.color,
         talla: previous?.talla ?? v.talla,
@@ -254,6 +265,17 @@ export async function saveSale(input: VentaInput, id?: number) {
         ubicacion_almacen: v.vestido.ubicacion_almacen,
       });
     }
+    if (subtotal.greaterThan("99999999.99"))
+      throw new AppError(
+        400,
+        "INVALID_TOTAL",
+        "El subtotal de prendas no debe exceder Bs 99.999.999,99",
+      );
+    applyOwnerAmounts(lines, input.importes_propietario);
+    subtotal = lines.reduce(
+      (sum, line) => sum.plus(lineAmount(line, line.cantidad)),
+      decimal(0),
+    );
     const delivery = old?.costo_delivery ?? decimal(10),
       additional = decimal(input.adicional_delivery),
       shipping = decimal(input.costo_envio ?? 0);
@@ -418,7 +440,11 @@ export async function printableSales(day: string, ids: number[]) {
           ? d.cantidad > d.cantidad_cancelada
           : !sale.reemplazo_completo,
       )
-      .map((d) => ({ ...d, cantidad: d.cantidad - d.cantidad_cancelada })),
+      .map((d) => ({
+        ...d,
+        cantidad: d.cantidad - d.cantidad_cancelada,
+        descuento_manual: lineDiscount(d, d.cantidad - d.cantidad_cancelada),
+      })),
   }));
 }
 
@@ -495,9 +521,8 @@ export async function exchangeSale(id: number, input: CambioInput) {
           "INVALID_RETURN",
           "No puedes devolver más prendas de las entregadas o devolverlas dos veces",
         );
-      returned = returned.plus(
-        line.precio_unitario_aplicado.mul(item.cantidad),
-      );
+      const offset = line.devoluciones.reduce((n, d) => n + d.cantidad, 0);
+      returned = returned.plus(lineAmount(line, item.cantidad, offset));
       stock.set(
         line.id_variante,
         (stock.get(line.id_variante) ?? 0) + item.cantidad,
@@ -508,6 +533,7 @@ export async function exchangeSale(id: number, input: CambioInput) {
         id_variante: line.id_variante,
         cantidad: item.cantidad,
         precio_unitario_aplicado: line.precio_unitario_aplicado,
+        descuento_manual: lineDiscount(line, item.cantidad, offset),
         nombre_vestido: line.nombre_vestido ?? line.variante.vestido.nombre,
         color: line.color ?? line.variante.color,
         talla: line.talla,
@@ -565,12 +591,15 @@ export async function exchangeSale(id: number, input: CambioInput) {
         returnedNow;
       if (retained <= 0) continue;
       total += retained;
-      delivered = delivered.plus(line.precio_unitario_aplicado.mul(retained));
+      const offset =
+        line.devoluciones.reduce((n, d) => n + d.cantidad, 0) + returnedNow;
+      delivered = delivered.plus(lineAmount(line, retained, offset));
       lines.push({
         tipo: "Entrega",
         id_variante: line.id_variante,
         cantidad: retained,
         precio_unitario_aplicado: line.precio_unitario_aplicado,
+        descuento_manual: lineDiscount(line, retained, offset),
         nombre_vestido: line.nombre_vestido,
         color: line.color,
         talla: line.talla,
@@ -719,7 +748,7 @@ async function confirmDeliveryInTransaction(
     const delivered = quantities.get(line.id_detalle) ?? 0;
     const cancelled = line.cantidad - delivered;
     total += delivered;
-    subtotal = subtotal.plus(line.precio_unitario_aplicado.mul(delivered));
+    subtotal = subtotal.plus(lineAmount(line, delivered));
     stock.set(line.id_variante, (stock.get(line.id_variante) ?? 0) + cancelled);
     await tx.detalleVenta.update({
       where: { id_detalle: line.id_detalle },
