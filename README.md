@@ -223,3 +223,18 @@ Ejemplo de registro (`id_variante` debe existir y tener stock):
 ```
 
 Editar usa el mismo formato completo y la `version` recibida en la venta. Cancelar recibe `{"version":1}`. Un conflicto responde 409 y requiere recargar antes de reintentar.
+
+## Contabilidad
+
+Los endpoints requieren la misma autenticación Bearer que ventas e inventario:
+
+- `GET /api/contabilidad?mes=2026-11`: devuelve `mes`, `propietarios` (ingresos, costos/gastos y resultado), `movimientos` y `totales`. Sin `mes`, usa el actual de Bolivia. Los importes se serializan como cadenas con dos decimales.
+- `POST /api/contabilidad/gastos`: registra un costo o gasto con `{ "fecha": "2026-11-19", "concepto": "Compra de bolsas", "tipo": "Gasto", "importe": "12.50", "id_propietario": 1 }`. Admite `Costo` y `Gasto`, importe positivo de hasta dos decimales y un propietario existente. Emite el evento SSE compartido.
+
+Los ingresos de ventas se calculan al consultar, exclusivamente para `estado = Realizada` (entregadas), por propietario histórico de la prenda y con sus descuentos. Las cantidades canceladas no suman. Los reemplazos completos cuentan solo su pedido entregado; las devoluciones de cambios antiguos incrementales se restan. No se generan asientos duplicados y los ingresos existentes ligados a una venta se omiten para no volver a sumarla. Se conservan los ingresos manuales sin venta y los costos/gastos de la tabla existente.
+
+La consulta usa una instantánea transaccional. El mes de una venta corresponde a su fecha de registro en `America/La_Paz`; los movimientos manuales usan su fecha `Date`. No existe una fecha de entrega separada. Consultar contabilidad no modifica estados; se mantiene el cierre diario automático de ventas que ya utiliza el servidor.
+
+Los ingresos de prendas excluyen delivery adicional, envío y costo de delivery: no hay una regla de reparto del delivery entre propietarios. El resultado resta los costos/gastos registrados para cada contribuyente. Se reutiliza `MovimientoContabilidad`, sin migraciones adicionales. El frontend exporta el mismo reporte mensual como CSV.
+
+`tests/accounting.test.ts` valida autenticación, entradas, exclusión de pendientes/canceladas, entrega parcial, reemplazos, descuentos, dueño histórico, gastos y límites mensuales de Bolivia en una base PGlite temporal.
