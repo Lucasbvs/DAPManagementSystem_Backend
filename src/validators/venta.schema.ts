@@ -61,6 +61,27 @@ export const ventaSchema = z
       )
       .min(1)
       .max(100),
+    importes_propietario: z
+      .array(
+        z
+          .object({
+            id_propietario: z.number().int().positive().max(2147483647),
+            monto_prendas: z
+              .string()
+              .regex(
+                /^(0|[1-9]\d{0,7})$/,
+                "El importe de prendas debe ser un número entero",
+              ),
+          })
+          .strict(),
+      )
+      .max(100)
+      .refine(
+        (rows) =>
+          new Set(rows.map((row) => row.id_propietario)).size === rows.length,
+        { message: "No repitas dueños en los importes" },
+      )
+      .optional(),
     adicional_delivery: z
       .union([money, z.literal(""), z.null()])
       .optional()

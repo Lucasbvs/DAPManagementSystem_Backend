@@ -1,5 +1,6 @@
 import PDFDocument from "pdfkit";
 import { resolve } from "node:path";
+import { lineAmount } from "./salePricing.service.js";
 import type { printableSales } from "./ventas.service.js";
 const hour = (value: string) => {
   const [h, m] = value.split(":").map(Number);
@@ -109,6 +110,9 @@ export async function salesPdf(
           d.color ?? d.variante.color,
           d.talla ?? "",
           d.ubicacion_almacen ? `Almacén ${d.ubicacion_almacen}` : "",
+          d.descuento_manual.greaterThan(0)
+            ? `Rebaja: ${money(d.descuento_manual)}`
+            : "",
         ]
           .filter(Boolean)
           .join(" / ");
@@ -133,9 +137,7 @@ export async function salesPdf(
         })
         .text(
           money(
-            Number(d.precio_unitario_aplicado) *
-              d.cantidad *
-              (d.tipo === "Devolucion" ? -1 : 1),
+            lineAmount(d, d.cantidad).mul(d.tipo === "Devolucion" ? -1 : 1),
           ),
           457,
           y,
