@@ -24,6 +24,7 @@ model Propietario {
  @@map("Propietarios")
 }
 model Vestido {
+ activo Boolean @default(true)
  ubicacion_almacen String? @db.VarChar(20)
  id_vestido Int @id @default(autoincrement())
  numero_vestido Int @default(autoincrement())
@@ -35,11 +36,13 @@ model Vestido {
  id_propietario Int
  propietario Propietario @relation(fields:[id_propietario], references:[id_propietario], onDelete:Restrict)
  variantes VarianteVestido[]
+ @@index([activo])
  @@index([id_propietario])
  @@map("Vestidos")
 }
 /// Stock por combinación de color y talla; el total del vestido se deriva de la suma.
 model VarianteVestido {
+ activo Boolean @default(true)
  id_variante Int @id @default(autoincrement())
  id_vestido Int
  color String @db.VarChar(30)

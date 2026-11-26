@@ -238,3 +238,11 @@ La consulta usa una instantánea transaccional. El mes de una venta corresponde 
 Los ingresos de prendas excluyen delivery adicional, envío y costo de delivery: no hay una regla de reparto del delivery entre propietarios. El resultado resta los costos/gastos registrados para cada contribuyente. Se reutiliza `MovimientoContabilidad`, sin migraciones adicionales. El frontend exporta el mismo reporte mensual como CSV.
 
 `tests/accounting.test.ts` valida autenticación, entradas, exclusión de pendientes/canceladas, entrega parcial, reemplazos, descuentos, dueño histórico, gastos y límites mensuales de Bolivia en una base PGlite temporal.
+
+## Archivado y reactivación de vestidos
+
+La migración `202611260001_inventory_soft_delete` añade el estado activo de vestidos y variantes. Antes de iniciar la API actualizada, ejecutar `npm run db:migrate` y `npm run db:generate`. Para instalaciones administradas manualmente en pgAdmin, usar `database/06_archivar_vestidos_pgadmin.sql` en lugar de esa migración; no ejecutar ambos métodos sobre la misma base.
+
+Eliminar un vestido con ventas lo archiva y lo excluye del catálogo; uno sin ventas se elimina definitivamente. Registrar el mismo nombre de un vestido archivado (sin distinguir mayúsculas) reactiva su ID y número, reemplazando propietario, descripción, ubicación, precios y existencias. Si hay varios archivados con ese nombre, se recupera el de menor ID. Los nombres activos conservan el comportamiento previo de creación.
+
+Las variantes anteriores se mantienen ocultas para conservar ventas, cancelaciones y devoluciones históricas. Las existencias del formulario generan variantes activas nuevas; los movimientos de ventas antiguas no modifican ese stock nuevo. Los vestidos archivados no pueden añadirse a ventas ni a entregas nuevas; se permite conservar o reducir las cantidades ya reservadas en pedidos pendientes.

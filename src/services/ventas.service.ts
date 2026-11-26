@@ -224,6 +224,17 @@ export async function saveSale(input: VentaInput, id?: number) {
           "VARIANT_REMOVED",
           "Una variante ya no existe. Actualiza el catálogo",
         );
+      const previous = old?.detalles.find(
+        (d) => d.id_variante === v.id_variante,
+      );
+      const archived = !v.activo || !v.vestido.activo;
+      // Permite gestionar pedidos previos, pero no vender más prendas archivadas.
+      if (archived && (!previous || line.cantidad > previous.cantidad))
+        throw new AppError(
+          409,
+          "VARIANT_ARCHIVED",
+          "El vestido está archivado. Actualiza el catálogo para elegir otra prenda",
+        );
       const stock = await tx.varianteVestido.updateMany({
         where: {
           id_variante: v.id_variante,
@@ -238,11 +249,8 @@ export async function saveSale(input: VentaInput, id?: number) {
           `Stock insuficiente: ${v.vestido.nombre} / ${v.color}`,
         );
       // Conserva precio histórico si la variante y el tramo de cantidad no cambian.
-      const previous = old?.detalles.find(
-        (d) => d.id_variante === v.id_variante,
-      );
       const price =
-        previous && old?.tarifa_aplicada === tariffFor(total)
+        previous && (archived || old?.tarifa_aplicada === tariffFor(total))
           ? previous.precio_unitario_aplicado
           : priceFor(v.vestido, total);
       subtotal = subtotal.plus(price.mul(line.cantidad));
@@ -546,7 +554,11 @@ export async function exchangeSale(id: number, input: CambioInput) {
     }
     let total = input.entregas.reduce((n, d) => n + d.cantidad, 0);
     const variants = await tx.varianteVestido.findMany({
-      where: { id_variante: { in: input.entregas.map((d) => d.id_variante) } },
+      where: {
+        id_variante: { in: input.entregas.map((d) => d.id_variante) },
+        activo: true,
+        vestido: { activo: true },
+      },
       include: { vestido: { include: { propietario: true } } },
     });
     for (const item of input.entregas) {
